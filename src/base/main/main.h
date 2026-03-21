@@ -172,6 +172,10 @@ extern ABC_DLL float           Abc_FrameReadMaxLoad();
 extern ABC_DLL void            Abc_FrameSetDrivingCell( char * pName );
 extern ABC_DLL void            Abc_FrameSetMaxLoad( float Load );
 
+extern ABC_DLL float           Abc_FrameReadWireResPerUm();
+extern ABC_DLL float           Abc_FrameReadWireCapPerUm();
+extern ABC_DLL void            Abc_FrameSetWireRC( float ResPerUm, float CapPerUm );
+
 extern ABC_DLL void            Abc_FrameSetArrayMapping( int * p );
 extern ABC_DLL void            Abc_FrameSetBoxes( int * p );
 
