@@ -24,6 +24,7 @@
 #include "bool/kit/kit.h"
 #include "aig/aig/aig.h"
 #include "map/mio/mio.h"
+#include "map/scl/sclLib.h"
 
 ABC_NAMESPACE_IMPL_START
 
@@ -114,6 +115,26 @@ Abc_Ntk_t * Abc_NtkIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
     // get timing information
     pPars->pTimesArr = Abc_NtkGetCiArrivalFloats(pNtk);
     pPars->pTimesReq = Abc_NtkGetCoRequiredFloats(pNtk);
+    
+    // get coordinate information from ABC frame for wire-aware mapping
+    if ( pPars->WireDelay > 0.0 )
+    {
+        extern Abc_Ntk_t * Io_ReadCoordsGetFromFrame( Abc_Frame_t * pAbc );
+        pPars->pNtkCoords = (void *)Io_ReadCoordsGetFromFrame( Abc_FrameGetGlobalFrame() );
+        printf("Wire-aware mapping enabled: WireDelay=%.4f, pNtkCoords=%p\n", 
+               pPars->WireDelay, pPars->pNtkCoords);
+        // Get SC library for tdelay-based cell delay calculation
+        SC_Lib * pSclLib = (SC_Lib *)Abc_FrameReadLibScl();
+        if ( pSclLib )
+        {
+            pPars->pSclLib = (void *)pSclLib;
+            printf("DEBUG: SC_Lib loaded for tdelay cell delay, pSclLib=%p\n", pSclLib);
+        }
+        else
+        {
+            printf("DEBUG: No SC_Lib found in ABC frame. Cell delay will use unit delay.\n");
+        }
+    }
 
     // update timing info to reflect logic level
     if ( (pPars->fDelayOpt || pPars->fDsdBalance || pPars->fUserRecLib || pPars->fUserSesLib || pPars->fUserLutDec || pPars->fUserLut2D ) && pNtk->pManTime )
@@ -219,7 +240,14 @@ If_Man_t * Abc_NtkToIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
     // start the mapping manager and set its parameters
     pIfMan = If_ManStart( pPars );
     pIfMan->pName = Abc_UtilStrsav( Abc_NtkName(pNtk) );
-
+    
+    // store original network pointer for name lookup in wire-aware mapping
+    if ( pPars->WireDelay > 0.0 )
+    {
+        pIfMan->pPars->pNtkOrig = (void *)pNtk;
+        printf("DEBUG: Storing original network pointer pNtkOrig=%p\n", pNtk);
+    }
+    
     // print warning about excessive memory usage
     if ( 1.0 * Abc_NtkObjNum(pNtk) * pIfMan->nObjBytes / (1<<30) > 1.0 )
         printf( "Warning: The mapper will allocate %.1f GB for to represent the subject graph with %d AIG nodes.\n", 

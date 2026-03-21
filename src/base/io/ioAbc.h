@@ -163,7 +163,13 @@ extern FILE *             Io_FileOpen( const char * FileName, const char * PathV
 extern void               Io_ReadJson( char * pFileName );
 extern void               Io_WriteJson( char * pFileName );
 
-
+// Coordinate reading for ABC-aware remapping
+extern Abc_Ntk_t *       Io_ReadCoords( char * pFileName );
+extern int                Io_ReadCoordsGetCoord( Abc_Ntk_t * pNtk, char * pName, float * px, float * py );
+extern void               Io_ReadCoordsGetCoordByIndex( Abc_Ntk_t * pNtk, int i, float * px, float * py );
+extern int                Io_ReadCoordsGetCount( Abc_Ntk_t * pNtk );
+extern void               Io_ReadCoordsFreeData( Abc_Ntk_t * pNtk );
+extern void               Io_ReadCoordsGetWireRCFromCoords( Abc_Ntk_t * pNtkCoords, float * pR, float * pC );
 
 ABC_NAMESPACE_HEADER_END
 

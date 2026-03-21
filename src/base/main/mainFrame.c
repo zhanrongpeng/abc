@@ -62,6 +62,9 @@ void *      Abc_FrameReadLibGen()                            { return s_GlobalFr
 void *      Abc_FrameReadLibGen2()                           { return s_GlobalFrame->pLibGen2;     } 
 void *      Abc_FrameReadLibSuper()                          { return s_GlobalFrame->pLibSuper;    } 
 void *      Abc_FrameReadLibScl()                            { return s_GlobalFrame->pLibScl;      } 
+float       Abc_FrameReadWireResPerUm()                    { return s_GlobalFrame->wire_r_per_um; }
+float       Abc_FrameReadWireCapPerUm()                    { return s_GlobalFrame->wire_c_per_um; }
+void        Abc_FrameSetWireRC( float ResPerUm, float CapPerUm ) { s_GlobalFrame->wire_r_per_um = ResPerUm; s_GlobalFrame->wire_c_per_um = CapPerUm; }
 #ifdef ABC_USE_CUDD
 void *      Abc_FrameReadManDd()                             { if ( s_GlobalFrame->dd == NULL )      s_GlobalFrame->dd = Cudd_Init( 0, 0, CUDD_UNIQUE_SLOTS, CUDD_CACHE_SLOTS, 0 );  return s_GlobalFrame->dd;      } 
 #endif

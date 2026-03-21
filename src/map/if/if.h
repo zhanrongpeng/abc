@@ -156,6 +156,9 @@ struct If_Par_t_
     char *             pLutStruct;    // LUT structure
     int                fEnableStructN;// LUT structure using a new method
     float              WireDelay;     // wire delay
+    void *             pNtkCoords;    // pointer to network with coordinates
+    void *             pNtkOrig;      // pointer to original ABC network for name lookup
+    void *             pSclLib;       // pointer to SC_Lib for tdelay-aware cell delay (wire-aware mapping)
     // internal parameters
     int                fSkipCutFilter;// skip cut filter
     int                fAreaOnly;     // area only mode
@@ -740,4 +743,3 @@ ABC_NAMESPACE_HEADER_END
 ////////////////////////////////////////////////////////////////////////
 ///                       END OF FILE                                ///
 ////////////////////////////////////////////////////////////////////////
-

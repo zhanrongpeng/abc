@@ -19,6 +19,10 @@
 ***********************************************************************/
 
 #include "if.h"
+#include "base/io/ioAbc.h"
+#include "base/abc/abc.h"
+#include "map/scl/sclLib.h"
+#include <math.h>
 
 ABC_NAMESPACE_IMPL_START
 
@@ -92,18 +96,167 @@ float If_CutDelay( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut )
 {
     static int pPinPerm[IF_MAX_LUTSIZE];
     static float pPinDelays[IF_MAX_LUTSIZE];
+    static int print_count = 0;
+    static int print_limit = 20;
     char * pPerm = If_CutPerm( pCut );
     If_Obj_t * pLeaf;
     float Delay, DelayCur;
     float * pLutDelays;
     int i, Shift, Pin2PinDelay;//, iLeaf;
     Delay = -IF_FLOAT_LARGE;
+    float cell_delay = -IF_FLOAT_LARGE;
+    float wire_delay = 0.0f;
+    float wirelength = 0.0f;
+    float r_per_um = 0.0f, c_per_um = 0.0f;
+
+    // ============================================================
+    // Wire-aware mapping: compute wire delay using centroid distance
+    // Based on phyLS approach: centroid of cut leaves = gate output position,
+    // worst leaf-to-centroid Manhattan distance = wire length.
+    // If_Obj_t::pCopy points to the corresponding Abc_Obj_t in pNtkOrig.
+    // ============================================================
+    if ( p->pPars->WireDelay > 0.0 && p->pPars->pNtkCoords )
+    {
+        Abc_Ntk_t * pNtkCoords = (Abc_Ntk_t *)p->pPars->pNtkCoords;
+        float pin_x_sum = 0.0f, pin_y_sum = 0.0f;
+        int nPins = 0;
+
+        // Phase 1: collect unique pin coordinates (deduplicate by instance name)
+        // Output pin
+        {
+            Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pObj->pCopy;
+            if ( pAbcObj != NULL )
+            {
+                char * pName = Abc_ObjName( pAbcObj );
+                float x, y;
+                if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+                {
+                    pin_x_sum += x;
+                    pin_y_sum += y;
+                    nPins++;
+                }
+            }
+        }
+
+        // Input pins (cut leaves) - collect unique coordinates only
+        If_CutForEachLeaf( p, pCut, pLeaf, i )
+        {
+            Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pLeaf->pCopy;
+            if ( pAbcObj == NULL )
+                continue;
+            char * pName = Abc_ObjName( pAbcObj );
+
+            // Dedup: skip if same instance as output pin
+            {
+                Abc_Obj_t * pOutObj = (Abc_Obj_t *)pObj->pCopy;
+                if ( pOutObj != NULL )
+                {
+                    char * pOutName = Abc_ObjName( pOutObj );
+                    if ( pOutName && pName && strcmp( pOutName, pName ) == 0 )
+                        continue;
+                }
+            }
+
+            // Dedup against previously processed leaves
+            {
+                int j, is_dup = 0;
+                If_Obj_t * pOther;
+                If_CutForEachLeaf( p, pCut, pOther, j )
+                {
+                    if ( j >= i )
+                        break;
+                    Abc_Obj_t * pPrevObj = (Abc_Obj_t *)pOther->pCopy;
+                    if ( pPrevObj == NULL )
+                        continue;
+                    char * pPrevName = Abc_ObjName( pPrevObj );
+                    if ( pPrevName && pName && strcmp( pPrevName, pName ) == 0 )
+                    {
+                        is_dup = 1;
+                        break;
+                    }
+                }
+                if ( is_dup )
+                    continue;
+            }
+
+            float x, y;
+            if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+            {
+                pin_x_sum += x;
+                pin_y_sum += y;
+                nPins++;
+            }
+        }
+
+        if ( nPins == 0 )
+        {
+            // No coordinates found; fall back to zero wire delay
+            wirelength = 0.0f;
+        }
+        else
+        {
+            // Phase 2: worst (max) Manhattan distance from centroid to any unique pin
+            float centroid_x = pin_x_sum / nPins;
+            float centroid_y = pin_y_sum / nPins;
+            float worst_wirelength = 0.0f;
+
+            // Check output pin
+            {
+                Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pObj->pCopy;
+                if ( pAbcObj != NULL )
+                {
+                    char * pName = Abc_ObjName( pAbcObj );
+                    float x, y;
+                    if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+                    {
+                        float wl = fabsf( centroid_x - x ) + fabsf( centroid_y - y );
+                        if ( wl > worst_wirelength )
+                            worst_wirelength = wl;
+                    }
+                }
+            }
+
+            // Check each unique leaf pin (already deduplicated in Phase 1)
+            If_CutForEachLeaf( p, pCut, pLeaf, i )
+            {
+                Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pLeaf->pCopy;
+                if ( pAbcObj == NULL )
+                    continue;
+                char * pName = Abc_ObjName( pAbcObj );
+                float x, y;
+                if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+                {
+                    float wl = fabsf( centroid_x - x ) + fabsf( centroid_y - y );
+                    if ( wl > worst_wirelength )
+                        worst_wirelength = wl;
+                }
+            }
+            wirelength = worst_wirelength;
+        }
+
+        // Phase 3: compute wire delay from wirelength and RC
+        Io_ReadCoordsGetWireRCFromCoords( pNtkCoords, &r_per_um, &c_per_um );
+        if ( r_per_um > 0.0f && c_per_um > 0.0f )
+        {
+            // wire_delay_ps = R(ohm/um) * C(fF/um) * L(um) * 1e-3
+            wire_delay = r_per_um * c_per_um * wirelength * 1e-3f;
+        }
+        else
+        {
+            // Fallback: use fixed WireDelay coefficient
+            wire_delay = wirelength * p->pPars->WireDelay;
+        }
+    }
+
+    // ============================================================
+    // Cell delay computation (accumulate into cell_delay)
+    // ============================================================
     if ( pCut->fAndCut )
     {
         If_CutForEachLeaf( p, pCut, pLeaf, i )
         {
             DelayCur = If_ObjCutBest(pLeaf)->Delay + p->pPars->nAndDelay;
-            Delay = IF_MAX( Delay, DelayCur );
+            cell_delay = IF_MAX( cell_delay, DelayCur );
         }
     }
     else if ( p->pPars->pLutLib )
@@ -112,12 +265,11 @@ float If_CutDelay( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut )
         pLutDelays = p->pPars->pLutLib->pLutDelays[pCut->nLeaves];
         if ( p->pPars->pLutLib->fVarPinDelays )
         {
-            // compute the delay using sorted pins
             If_CutSortInputPins( p, pCut, pPinPerm, pPinDelays );
             for ( i = 0; i < (int)pCut->nLeaves; i++ )
             {
                 DelayCur = pPinDelays[pPinPerm[i]] + pLutDelays[i];
-                Delay = IF_MAX( Delay, DelayCur );
+                cell_delay = IF_MAX( cell_delay, DelayCur );
             }
         }
         else
@@ -125,42 +277,92 @@ float If_CutDelay( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut )
             If_CutForEachLeaf( p, pCut, pLeaf, i )
             {
                 DelayCur = If_ObjCutBest(pLeaf)->Delay + pLutDelays[0];
-                Delay = IF_MAX( Delay, DelayCur );
+                cell_delay = IF_MAX( cell_delay, DelayCur );
             }
         }
     }
-    else
+    else if ( p->pPars->pSclLib && p->pPars->WireDelay > 0.0 )
     {
-        if ( pCut->fUser )
+        // Wire-aware mapping with SC_Lib (tdelay-based cell delay)
+        SC_Lib * pSclLib = (SC_Lib *)p->pPars->pSclLib;
+        SC_Cell * pCellBest = NULL;
+        SC_Cell * pCell = NULL;
+        int i_temp;
+        SC_LibForEachCell( pSclLib, pCell, i_temp )
         {
-            assert( !p->pPars->fLiftLeaves );
+            if ( pCell->n_inputs == (int)pCut->nLeaves )
+            {
+                pCellBest = pCell->pRepr ? pCell->pRepr : pCell;
+                break;
+            }
+        }
+        if ( pCellBest == NULL )
+        {
             If_CutForEachLeaf( p, pCut, pLeaf, i )
             {
-                Pin2PinDelay = pPerm ? (pPerm[i] == IF_BIG_CHAR ? -IF_BIG_CHAR : pPerm[i]) : 1;
-                DelayCur = If_ObjCutBest(pLeaf)->Delay + (float)Pin2PinDelay;
-                Delay = IF_MAX( Delay, DelayCur );
+                DelayCur = If_ObjCutBest(pLeaf)->Delay + 1.0;
+                cell_delay = IF_MAX( cell_delay, DelayCur );
             }
         }
         else
         {
-            if ( p->pPars->fLiftLeaves )
+            float Slew = Abc_SclComputeAverageSlew( pSclLib );
+            float Load = SC_CellPinCapAve( pCellBest );
+            If_CutForEachLeaf( p, pCut, pLeaf, i )
             {
-                If_CutForEachLeafSeq( p, pCut, pLeaf, Shift, i )
-                {
-                    DelayCur = If_ObjCutBest(pLeaf)->Delay - Shift * p->Period;
-                    Delay = IF_MAX( Delay, DelayCur + 1.0 );
-                }
-            }
-            else
-            {
-                If_CutForEachLeaf( p, pCut, pLeaf, i )
-                {
-                    DelayCur = If_ObjCutBest(pLeaf)->Delay + 1.0;
-                    Delay = IF_MAX( Delay, DelayCur );
-                }
+                float tdelay_pin = Scl_LibPinArrivalEstimate( pCellBest, i, Slew, Load );
+                DelayCur = If_ObjCutBest(pLeaf)->Delay + tdelay_pin;
+                cell_delay = IF_MAX( cell_delay, DelayCur );
             }
         }
     }
+    else if ( pCut->fUser )
+    {
+        assert( !p->pPars->fLiftLeaves );
+        If_CutForEachLeaf( p, pCut, pLeaf, i )
+        {
+            Pin2PinDelay = pPerm ? (pPerm[i] == IF_BIG_CHAR ? -IF_BIG_CHAR : pPerm[i]) : 1;
+            DelayCur = If_ObjCutBest(pLeaf)->Delay + (float)Pin2PinDelay;
+            cell_delay = IF_MAX( cell_delay, DelayCur );
+        }
+    }
+    else
+    {
+        if ( p->pPars->fLiftLeaves )
+        {
+            If_CutForEachLeafSeq( p, pCut, pLeaf, Shift, i )
+            {
+                DelayCur = If_ObjCutBest(pLeaf)->Delay - Shift * p->Period;
+                cell_delay = IF_MAX( cell_delay, DelayCur + 1.0 );
+            }
+        }
+        else
+        {
+            If_CutForEachLeaf( p, pCut, pLeaf, i )
+            {
+                DelayCur = If_ObjCutBest(pLeaf)->Delay + 1.0;
+                cell_delay = IF_MAX( cell_delay, DelayCur );
+            }
+        }
+    }
+
+    // Total delay = cell_delay + wire_delay
+    Delay = cell_delay + wire_delay;
+
+    // ============================================================
+    // Debug output (first N cuts)
+    // ============================================================
+    if ( print_count < print_limit )
+    {
+        print_count++;
+        printf( "[DEBUG If_CutDelay #%d] obj=%d nLeaves=%d  "
+                "wirelength=%.2f  R=%.4f ohm/um  C=%.4f fF/um  "
+                "cell_delay=%.4f  wire_delay=%.4f  total=%.4f\n",
+                print_count, pObj->Id, pCut->nLeaves,
+                wirelength, r_per_um, c_per_um,
+                cell_delay, wire_delay, Delay );
+    }
+
     return Delay;
 }
 
@@ -209,6 +411,40 @@ void If_CutPropagateRequired( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut, fl
             Required = ObjRequired;
             If_CutForEachLeaf( p, pCut, pLeaf, i )
                 pLeaf->Required = IF_MIN( pLeaf->Required, Required - pLutDelays[0] );
+        }
+    }
+    // Wire-aware mapping with SC_Lib (tdelay-based backward required time)
+    // Mirror the forward cell delay computation: subtract tdelay[pin] from ObjRequired
+    else if ( p->pPars->pSclLib && p->pPars->WireDelay > 0.0 )
+    {
+        SC_Lib * pSclLib = (SC_Lib *)p->pPars->pSclLib;
+        SC_Cell * pCellBest = NULL;
+        SC_Cell * pCell = NULL;
+        int i_temp;
+        SC_LibForEachCellClass( pSclLib, pCell, i_temp )
+        {
+            if ( pCell->n_inputs == (int)pCut->nLeaves )
+            {
+                pCellBest = pCell->pRepr ? pCell->pRepr : pCell;
+                break;
+            }
+        }
+        if ( pCellBest == NULL )
+        {
+            // Fallback: use unit delay
+            Required = ObjRequired;
+            If_CutForEachLeaf( p, pCut, pLeaf, i )
+                pLeaf->Required = IF_MIN( pLeaf->Required, Required - (float)1.0 );
+        }
+        else
+        {
+            float Slew = Abc_SclComputeAverageSlew( pSclLib );
+            float Load = SC_CellPinCapAve( pCellBest );
+            If_CutForEachLeaf( p, pCut, pLeaf, i )
+            {
+                float tdelay_pin = Scl_LibPinArrivalEstimate( pCellBest, i, Slew, Load );
+                pLeaf->Required = IF_MIN( pLeaf->Required, ObjRequired - tdelay_pin );
+            }
         }
     }
     else if ( p->pPars->fUserLutDec || p->pPars->fUserLut2D )
@@ -528,4 +764,3 @@ void If_ManComputeRequired( If_Man_t * p )
 
 
 ABC_NAMESPACE_IMPL_END
-
