@@ -63,6 +63,7 @@ static int IoCommandReadSF      ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandReadRom     ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandReadMM      ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandReadMMGia   ( Abc_Frame_t * pAbc, int argc, char **argv );
+static int IoCommandReadCoords  ( Abc_Frame_t * pAbc, int argc, char **argv );
 
 static int IoCommandWrite       ( Abc_Frame_t * pAbc, int argc, char **argv );
 static int IoCommandWriteHie    ( Abc_Frame_t * pAbc, int argc, char **argv );
@@ -144,6 +145,8 @@ void Io_Init( Abc_Frame_t * pAbc )
     Cmd_CommandAdd( pAbc, "I/O", "read_rom",      IoCommandReadRom,      1 );
     Cmd_CommandAdd( pAbc, "I/O", "read_mm",       IoCommandReadMM,       1 );
     Cmd_CommandAdd( pAbc, "I/O", "&read_mm",      IoCommandReadMMGia,    1 );
+
+    Cmd_CommandAdd( pAbc, "I/O", "read_coords",   IoCommandReadCoords,   0 );
 
     Cmd_CommandAdd( pAbc, "I/O", "write",         IoCommandWrite,        0 );
     Cmd_CommandAdd( pAbc, "I/O", "write_hie",     IoCommandWriteHie,     0 );
@@ -4548,6 +4551,67 @@ usage:
     fprintf( pAbc->Err, "\t         write cell mapped current AIG into a file\n" );
     fprintf( pAbc->Err, "\t-h     : print the help message\n" );
     fprintf( pAbc->Err, "\tfile   : the name of the file to write\n" );
+    return 1;
+}
+
+/**Function*************************************************************
+
+  Synopsis    [Command to read coordinate file for wire-aware mapping.]
+
+  Description [Reads a coordinate file and stores it in the ABC frame.
+  The file format is:
+    # Instance coordinates for ABC-aware remapping
+    # wire_rc R C
+    N
+    inst_name1 x1 y1
+    inst_name2 x2 y2
+    ...
+  The coordinates are stored in pAbc->pNtkCoords and can be used
+  by the 'if -W' command for wire-aware mapping.
+
+  SideEffects []
+
+  SeeAlso     [Io_ReadCoords]
+
+***********************************************************************/
+int IoCommandReadCoords( Abc_Frame_t * pAbc, int argc, char **argv )
+{
+    Abc_Ntk_t * pNtkCoords;
+    char * pFileName;
+    int c;
+
+    Extra_UtilGetoptReset();
+    while ( ( c = Extra_UtilGetopt( argc, argv, "h" ) ) != EOF )
+    {
+        switch ( c )
+        {
+            case 'h':
+                goto usage;
+            default:
+                goto usage;
+        }
+    }
+    if ( argc != globalUtilOptind + 1 )
+        goto usage;
+    // get the input file name
+    pFileName = argv[globalUtilOptind];
+    // read the coordinates
+    pNtkCoords = Io_ReadCoords( pFileName );
+    if ( pNtkCoords == NULL )
+    {
+        Abc_Print( -1, "IoCommandReadCoords(): Cannot read coordinate file \"%s\".\n", pFileName );
+        return 1;
+    }
+    // store in ABC frame
+    pAbc->pNtkCoords = pNtkCoords;
+    Abc_Print( 0, "IoCommandReadCoords(): Read %d coordinates from \"%s\".\n",
+               Io_ReadCoordsGetCount( pNtkCoords ), pFileName );
+    return 0;
+
+usage:
+    fprintf( pAbc->Err, "usage: read_coords [-h] <file>\n" );
+    fprintf( pAbc->Err, "\t         reads the coordinate file for wire-aware mapping\n" );
+    fprintf( pAbc->Err, "\t-h     : prints the command summary\n" );
     return 1;
 }
 
