@@ -8,6 +8,7 @@ SRC +=  src/base/io/io.c \
     src/base/io/ioReadBlif.c \
     src/base/io/ioReadBlifAig.c \
     src/base/io/ioReadBlifMv.c \
+    src/base/io/ioReadCoords.c \
     src/base/io/ioReadDsd.c \
     src/base/io/ioReadEdif.c \
     src/base/io/ioReadEqn.c \
