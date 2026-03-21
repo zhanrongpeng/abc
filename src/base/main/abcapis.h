@@ -115,6 +115,9 @@ extern ABC_DLL void   Abc_FrameSetRetimingData( Abc_Frame_t * pAbc, int * pRst, 
 // procedure to return sequential equivalences
 extern ABC_DLL int *  Abc_FrameReadMiniAigEquivClasses( Abc_Frame_t * pAbc );
 
+// procedure to return wire RC
+extern ABC_DLL void   Abc_FrameSetWireRC( float ResPerUm, float CapPerUm );
+
 ABC_NAMESPACE_HEADER_END
 
 #endif
