@@ -119,10 +119,13 @@ Abc_Ntk_t * Abc_NtkIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
     // get coordinate information from ABC frame for wire-aware mapping
     if ( pPars->WireDelay > 0.0 )
     {
-        extern Abc_Ntk_t * Io_ReadCoordsGetFromFrame( Abc_Frame_t * pAbc );
-        pPars->pNtkCoords = (void *)Io_ReadCoordsGetFromFrame( Abc_FrameGetGlobalFrame() );
+        extern void * Io_ReadCoordsGetFromFrame( Abc_Frame_t * pAbc );
+        extern void Io_ReadCoordsPrintNamesForDebug( void * pCoords );
+        pPars->pNtkCoords = Io_ReadCoordsGetFromFrame( Abc_FrameGetGlobalFrame() );
         printf("Wire-aware mapping enabled: WireDelay=%.4f, pNtkCoords=%p\n", 
                pPars->WireDelay, pPars->pNtkCoords);
+        if ( pPars->pNtkCoords )
+            Io_ReadCoordsPrintNamesForDebug( pPars->pNtkCoords );
         // Get SC library for tdelay-based cell delay calculation
         SC_Lib * pSclLib = (SC_Lib *)Abc_FrameReadLibScl();
         if ( pSclLib )
@@ -246,6 +249,34 @@ If_Man_t * Abc_NtkToIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
     {
         pIfMan->pPars->pNtkOrig = (void *)pNtk;
         printf("DEBUG: Storing original network pointer pNtkOrig=%p\n", pNtk);
+        // Debug: print first 20 original node names vs strashed node IDs
+        if ( pPars->pNtkCoords )
+        {
+            extern void Io_ReadCoordsPrintNamesForDebug( void * pCoords );
+            Io_ReadCoordsPrintNamesForDebug( pPars->pNtkCoords );
+            printf("DEBUG: Original BLIF network names (nodes first 20 + POs):\n");
+            Abc_Obj_t * pNode; int ii;
+            int cnt = 0;
+            // Print nodes
+            Abc_NtkForEachNode( pNtk, pNode, ii )
+            {
+                if ( cnt < 20 )
+                {
+                    cnt++;
+                    printf("  [node %d] objId=%d name=\"%s\"\n",
+                           cnt, Abc_ObjId(pNode), Abc_ObjName(pNode));
+                }
+            }
+            // Also print POs
+            Abc_NtkForEachCo( pNtk, pNode, ii )
+            {
+                const char * faninName = Abc_ObjIsCi(Abc_ObjFanin0(pNode)) ? "CI" :
+                       Abc_ObjName(Abc_ObjFanin0(pNode));
+                printf("  [PO %d] objId=%d name=\"%s\" fanin=%s\n",
+                       ii, Abc_ObjId(pNode), Abc_ObjName(pNode), faninName);
+            }
+            printf("  (Total nodes: %d, Total POs: %d)\n", Abc_NtkNodeNum(pNtk), Abc_NtkCoNum(pNtk));
+        }
     }
     
     // print warning about excessive memory usage
@@ -255,6 +286,23 @@ If_Man_t * Abc_NtkToIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
 
     // create PIs and remember them in the old nodes
     Abc_NtkCleanCopy( pNtk );
+    // Allocate name maps for wire-aware mapping:
+    // (built BEFORE Abc_AigDfs since DFS clobbers pCopy)
+    if ( pPars->WireDelay > 0.0 && pPars->pNtkCoords )
+    {
+        pIfMan->vNodeNameMap = (void **)ABC_CALLOC( void *, Abc_NtkObjNumMax(pNtk) );
+        // Allocate driving PO name map: For each original node, store the name of
+        // the PO it drives (for coordinate lookup). CIs drive POs directly.
+        pIfMan->vNodeDrivingPoName = (void **)ABC_CALLOC( void *, Abc_NtkObjNumMax(pNtk) );
+        // Mark POs driven by CIs: CI -> PO name
+        Abc_NtkForEachCo( pNtk, pNode, i )
+        {
+            Abc_Obj_t * pFanin = Abc_ObjFanin0( pNode );
+            int faninId = Abc_ObjId( pFanin );
+            const char * poName = Abc_ObjName( pNode );
+            pIfMan->vNodeDrivingPoName[faninId] = (void *)Extra_UtilStrsav( poName );
+        }
+    }
     Abc_AigConst1(pNtk)->pCopy = (Abc_Obj_t *)If_ManConst1( pIfMan );
     Abc_NtkForEachCi( pNtk, pNode, i )
     {
@@ -265,6 +313,9 @@ If_Man_t * Abc_NtkToIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
         // mark the largest level
         if ( pIfMan->nLevelMax < (int)pIfObj->Level )
             pIfMan->nLevelMax = (int)pIfObj->Level;
+        // Store blif node pointer for wire-aware mapping (indexed by If_ObjId)
+        if ( pIfMan->vNodeNameMap )
+            pIfMan->vNodeNameMap[ If_ObjId(pIfObj) ] = pNode;
     }
 
     // load the AIG into the mapper
@@ -274,9 +325,12 @@ If_Man_t * Abc_NtkToIf( Abc_Ntk_t * pNtk, If_Par_t * pPars )
     {
         Extra_ProgressBarUpdate( pProgress, i, "Initial" );
         // add the node to the mapper
-        pNode->pCopy = (Abc_Obj_t *)If_ManCreateAnd( pIfMan, 
-            If_NotCond( Abc_ObjIfCopy(Abc_ObjFanin0(pNode)), Abc_ObjFaninC0(pNode) ), 
+        pNode->pCopy = (Abc_Obj_t *)If_ManCreateAnd( pIfMan,
+            If_NotCond( Abc_ObjIfCopy(Abc_ObjFanin0(pNode)), Abc_ObjFaninC0(pNode) ),
             If_NotCond( Abc_ObjIfCopy(Abc_ObjFanin1(pNode)), Abc_ObjFaninC1(pNode) ) );
+        // Store blif node pointer for wire-aware mapping (vNodeNameMap indexed by If_ObjId)
+        if ( pIfMan->vNodeNameMap )
+            pIfMan->vNodeNameMap[ If_ObjId((If_Obj_t *)pNode->pCopy) ] = pNode;
         // set up the choice node
         if ( Abc_AigNodeIsChoice( pNode ) )
         {

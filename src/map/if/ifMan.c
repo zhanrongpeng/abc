@@ -745,6 +745,7 @@ If_Obj_t * If_ManSetupObj( If_Man_t * p )
     Vec_PtrPush( p->vObjs, pObj );
     // set the required times
     pObj->Required = IF_FLOAT_LARGE;
+    pObj->LValue  = 0.0f;  // wirelength accumulator (PI/const = 0)
     return pObj;
 }
 

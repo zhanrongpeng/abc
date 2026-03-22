@@ -159,6 +159,7 @@ struct If_Par_t_
     void *             pNtkCoords;    // pointer to network with coordinates
     void *             pNtkOrig;      // pointer to original ABC network for name lookup
     void *             pSclLib;       // pointer to SC_Lib for tdelay-aware cell delay (wire-aware mapping)
+    void *             pCoordsHash;   // name->(x,y) hash table for wire-aware mapping (avoids pCopy)
     // internal parameters
     int                fSkipCutFilter;// skip cut filter
     int                fAreaOnly;     // area only mode
@@ -254,6 +255,10 @@ struct If_Man_t_
     Vec_Int_t *        vLags;         // sequentail lags of all nodes
     int                nAttempts;     // the number of attempts in binary search
     int                nMaxIters;     // the maximum number of iterations
+    // wire-aware mapping: If_ObjId -> blif node name (for coordinate lookup)
+    void **            vNodeNameMap;  // void** array, allocated by ABC_CALLOC
+    // wire-aware mapping: If_ObjId -> name of PO driven by this node (for coordinate lookup)
+    void **            vNodeDrivingPoName;  // void** array, allocated by ABC_CALLOC
     int                Period;        // the current value of the clock period (for seq mapping)
     // memory management
     int                nTruth6Words[IF_MAX_FUNC_LUTSIZE+1];  // the size of the truth table if allocated

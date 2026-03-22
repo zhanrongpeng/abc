@@ -36,6 +36,51 @@ ABC_NAMESPACE_IMPL_START
 
 /**Function*************************************************************
 
+  Synopsis    [Get coordinates by node name string using pNtkOrig + pNtkCoords.]
+
+  Description [Wire-aware mapping: looks up the node with given blif name
+  in the original (pre-strash) ABC network (pNtkOrig), then finds its
+  coordinates from the coordinate network (pNtkCoords).
+
+  Returns 1 on success, 0 if not found.]
+
+  SideEffects []
+
+  SeeAlso     []
+
+***********************************************************************/
+// Helper: get x coordinate of If_Obj by leaf ID
+static float If_CutDelayGetX( If_Man_t * p, int LeafId, void * pCoords )
+{
+    if ( pCoords == NULL || p == NULL || p->vNodeNameMap == NULL )
+        return 0.0f;
+    void * pBlifNodePtr = p->vNodeNameMap[LeafId];
+    if ( pBlifNodePtr == NULL )
+        return 0.0f;
+    Abc_Obj_t * pBlifNode = (Abc_Obj_t *)pBlifNodePtr;
+    float x, y;
+    if ( Io_ReadCoordsGetCoordByName( pCoords, Abc_ObjName(pBlifNode), &x, &y ) )
+        return x;
+    return 0.0f;
+}
+
+// Helper: get y coordinate of If_Obj by leaf ID
+static float If_CutDelayGetY( If_Man_t * p, int LeafId, void * pCoords )
+{
+    if ( pCoords == NULL || p == NULL || p->vNodeNameMap == NULL )
+        return 0.0f;
+    void * pBlifNodePtr = p->vNodeNameMap[LeafId];
+    if ( pBlifNodePtr == NULL )
+        return 0.0f;
+    Abc_Obj_t * pBlifNode = (Abc_Obj_t *)pBlifNodePtr;
+    float x, y;
+    if ( Io_ReadCoordsGetCoordByName( pCoords, Abc_ObjName(pBlifNode), &x, &y ) )
+        return y;
+    return 0.0f;
+}
+
+/**Function*************************************************************
+
   Synopsis    [Sorts the pins in the decreasing order of delays.]
 
   Description []
@@ -106,145 +151,133 @@ float If_CutDelay( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut )
     Delay = -IF_FLOAT_LARGE;
     float cell_delay = -IF_FLOAT_LARGE;
     float wire_delay = 0.0f;
-    float wirelength = 0.0f;
+    float wirelength_um = 0.0f;
     float r_per_um = 0.0f, c_per_um = 0.0f;
 
     // ============================================================
-    // Wire-aware mapping: compute wire delay using centroid distance
-    // Based on phyLS approach: centroid of cut leaves = gate output position,
-    // worst leaf-to-centroid Manhattan distance = wire length.
-    // If_Obj_t::pCopy points to the corresponding Abc_Obj_t in pNtkOrig.
+    // Wire-aware mapping: cut-to-cut wirelength and Elmore delay
+    //
+    // Model: Each cut's output sits at the centroid of its fanin cells.
+    //        Wire between cut_i and cut_j = Manhattan distance between
+    //        their fanin centroids.
+    //        wirelength = max over fanins: (fanin.LValue + dist(fanin_pos, centroid))
+    //        wire_delay = Elmore: R * C * L^2 / 2
+    //
+    // vNodeNameMap[If_ObjId] -> blif node pointer (stable, built before DFS)
+    // pObj->LValue  -> accumulated wirelength of this node's cut output (um)
+    // pLeaf->LValue -> fanin's accumulated wirelength
     // ============================================================
-    if ( p->pPars->WireDelay > 0.0 && p->pPars->pNtkCoords )
+    if ( p->pPars->WireDelay > 0.0 && p->pPars->pNtkCoords && p->vNodeNameMap )
     {
-        Abc_Ntk_t * pNtkCoords = (Abc_Ntk_t *)p->pPars->pNtkCoords;
-        float pin_x_sum = 0.0f, pin_y_sum = 0.0f;
-        int nPins = 0;
+        void * pCoords = p->pPars->pNtkCoords;
 
-        // Phase 1: collect unique pin coordinates (deduplicate by instance name)
-        // Output pin
-        {
-            Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pObj->pCopy;
-            if ( pAbcObj != NULL )
-            {
-                char * pName = Abc_ObjName( pAbcObj );
-                float x, y;
-                if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
-                {
-                    pin_x_sum += x;
-                    pin_y_sum += y;
-                    nPins++;
-                }
-            }
-        }
+        // Read wire RC
+        Io_ReadCoordsGetWireRCFromCoords( pCoords, &r_per_um, &c_per_um );
 
-        // Input pins (cut leaves) - collect unique coordinates only
+        // ----- Phase 1: compute cut centroid from fanin cell positions -----
+        // (cut internal wire is handled by cell_delay / tdelay)
+        float sum_x = 0.0f, sum_y = 0.0f;
+        int n_fanins = 0;
+
         If_CutForEachLeaf( p, pCut, pLeaf, i )
         {
-            Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pLeaf->pCopy;
-            if ( pAbcObj == NULL )
+            // Get driving PO name for this leaf node.
+            // vNodeDrivingPoName[orig_AbcNodeId] = PO name string (e.g., "_000_")
+            void * pBlifNodePtr = p->vNodeNameMap ? p->vNodeNameMap[pLeaf->Id] : NULL;
+            if ( pBlifNodePtr == NULL )
                 continue;
-            char * pName = Abc_ObjName( pAbcObj );
-
-            // Dedup: skip if same instance as output pin
+            Abc_Obj_t * pBlifNode = (Abc_Obj_t *)pBlifNodePtr;
+            int origNodeId = Abc_ObjId( pBlifNode );
+            const char * pName = NULL;
+            if ( p->vNodeDrivingPoName && origNodeId >= 0 )
+                pName = (const char *)p->vNodeDrivingPoName[origNodeId];
+            // Fallback: use node name (may have backslash escaping)
+            if ( pName == NULL || pName[0] == '\0' )
+                pName = Abc_ObjName( pBlifNode );
+            // Handle backslash escaping: "ctrl.state.out\[2\]" -> "ctrl.state.out[2]"
+            if ( pName && strchr( pName, '\\' ) != NULL )
             {
-                Abc_Obj_t * pOutObj = (Abc_Obj_t *)pObj->pCopy;
-                if ( pOutObj != NULL )
-                {
-                    char * pOutName = Abc_ObjName( pOutObj );
-                    if ( pOutName && pName && strcmp( pOutName, pName ) == 0 )
-                        continue;
-                }
+                static char unesc[1000];
+                int jj = 0;
+                for ( int kk = 0; pName[kk] != '\0' && jj < 999; kk++ )
+                    if ( pName[kk] != '\\' )
+                        unesc[jj++] = pName[kk];
+                unesc[jj] = '\0';
+                pName = unesc;
             }
-
-            // Dedup against previously processed leaves
-            {
-                int j, is_dup = 0;
-                If_Obj_t * pOther;
-                If_CutForEachLeaf( p, pCut, pOther, j )
-                {
-                    if ( j >= i )
-                        break;
-                    Abc_Obj_t * pPrevObj = (Abc_Obj_t *)pOther->pCopy;
-                    if ( pPrevObj == NULL )
-                        continue;
-                    char * pPrevName = Abc_ObjName( pPrevObj );
-                    if ( pPrevName && pName && strcmp( pPrevName, pName ) == 0 )
-                    {
-                        is_dup = 1;
-                        break;
-                    }
-                }
-                if ( is_dup )
-                    continue;
-            }
-
             float x, y;
-            if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+            if ( Io_ReadCoordsGetCoordByName( pCoords, pName, &x, &y ) )
             {
-                pin_x_sum += x;
-                pin_y_sum += y;
-                nPins++;
+                sum_x += x;
+                sum_y += y;
+                n_fanins++;
             }
         }
 
-        if ( nPins == 0 )
+        if ( n_fanins == 0 )
         {
-            // No coordinates found; fall back to zero wire delay
-            wirelength = 0.0f;
+            // No coordinates: wirelength stays 0
+            wirelength_um = 0.0f;
         }
         else
         {
-            // Phase 2: worst (max) Manhattan distance from centroid to any unique pin
-            float centroid_x = pin_x_sum / nPins;
-            float centroid_y = pin_y_sum / nPins;
-            float worst_wirelength = 0.0f;
+            float centroid_x = sum_x / n_fanins;
+            float centroid_y = sum_y / n_fanins;
 
-            // Check output pin
-            {
-                Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pObj->pCopy;
-                if ( pAbcObj != NULL )
-                {
-                    char * pName = Abc_ObjName( pAbcObj );
-                    float x, y;
-                    if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
-                    {
-                        float wl = fabsf( centroid_x - x ) + fabsf( centroid_y - y );
-                        if ( wl > worst_wirelength )
-                            worst_wirelength = wl;
-                    }
-                }
-            }
+            // ----- Phase 2: wirelength = max(fanin.LValue + dist(fanin, centroid)) -----
+            // PhyLS formula: wirelength = max over fanins of
+            //   (fanin_accumulated_wirelength + Manhattan distance)
+            float worst_wl = 0.0f;
 
-            // Check each unique leaf pin (already deduplicated in Phase 1)
             If_CutForEachLeaf( p, pCut, pLeaf, i )
             {
-                Abc_Obj_t * pAbcObj = (Abc_Obj_t *)pLeaf->pCopy;
-                if ( pAbcObj == NULL )
+                // Get driving PO name for this leaf node
+                void * pBlifNodePtr = p->vNodeNameMap ? p->vNodeNameMap[pLeaf->Id] : NULL;
+                if ( pBlifNodePtr == NULL )
                     continue;
-                char * pName = Abc_ObjName( pAbcObj );
-                float x, y;
-                if ( Io_ReadCoordsGetCoord( pNtkCoords, pName, &x, &y ) )
+                Abc_Obj_t * pBlifNode = (Abc_Obj_t *)pBlifNodePtr;
+                int origNodeId = Abc_ObjId( pBlifNode );
+                const char * pName = NULL;
+                if ( p->vNodeDrivingPoName && origNodeId >= 0 )
+                    pName = (const char *)p->vNodeDrivingPoName[origNodeId];
+                if ( pName == NULL || pName[0] == '\0' )
+                    pName = Abc_ObjName( pBlifNode );
+                if ( pName && strchr( pName, '\\' ) != NULL )
                 {
-                    float wl = fabsf( centroid_x - x ) + fabsf( centroid_y - y );
-                    if ( wl > worst_wirelength )
-                        worst_wirelength = wl;
+                    static char unesc2[1000];
+                    int jj = 0;
+                    for ( int kk = 0; pName[kk] != '\0' && jj < 999; kk++ )
+                        if ( pName[kk] != '\\' )
+                            unesc2[jj++] = pName[kk];
+                    unesc2[jj] = '\0';
+                    pName = unesc2;
+                }
+                float x, y;
+                if ( Io_ReadCoordsGetCoordByName( pCoords, pName, &x, &y ) )
+                {
+                    float dist = fabsf( x - centroid_x ) + fabsf( y - centroid_y );
+                    float wl = pLeaf->LValue + dist;
+                    if ( wl > worst_wl )
+                        worst_wl = wl;
                 }
             }
-            wirelength = worst_wirelength;
-        }
+            wirelength_um = worst_wl;
 
-        // Phase 3: compute wire delay from wirelength and RC
-        Io_ReadCoordsGetWireRCFromCoords( pNtkCoords, &r_per_um, &c_per_um );
-        if ( r_per_um > 0.0f && c_per_um > 0.0f )
-        {
-            // wire_delay_ps = R(ohm/um) * C(fF/um) * L(um) * 1e-3
-            wire_delay = r_per_um * c_per_um * wirelength * 1e-3f;
-        }
-        else
-        {
-            // Fallback: use fixed WireDelay coefficient
-            wire_delay = wirelength * p->pPars->WireDelay;
+            // ----- Phase 3: propagate centroid position to pObj->LValue -----
+            // pObj->LValue = wirelength of this cut's output = worst_wl
+            pObj->LValue = wirelength_um;
+
+            // ----- Phase 4: compute Elmore wire delay -----
+            // wire_delay_ps = R(ohm/um) * C(fF/um) * L(um)^2 / 2 * 1e-3
+            if ( r_per_um > 0.0f && c_per_um > 0.0f )
+            {
+                wire_delay = r_per_um * c_per_um * wirelength_um * wirelength_um * 0.5f * 1e-3f;
+            }
+            else
+            {
+                // Fallback: use fixed WireDelay coefficient (unit delay * length)
+                wire_delay = wirelength_um * p->pPars->WireDelay;
+            }
         }
     }
 
@@ -356,10 +389,10 @@ float If_CutDelay( If_Man_t * p, If_Obj_t * pObj, If_Cut_t * pCut )
     {
         print_count++;
         printf( "[DEBUG If_CutDelay #%d] obj=%d nLeaves=%d  "
-                "wirelength=%.2f  R=%.4f ohm/um  C=%.4f fF/um  "
-                "cell_delay=%.4f  wire_delay=%.4f  total=%.4f\n",
+                "wirelength=%.2fum  R=%.4f ohm/um  C=%.4f fF/um  "
+                "cell_delay=%.4f  wire_delay=%.4fps  total=%.4f\n",
                 print_count, pObj->Id, pCut->nLeaves,
-                wirelength, r_per_um, c_per_um,
+                wirelength_um, r_per_um, c_per_um,
                 cell_delay, wire_delay, Delay );
     }
 

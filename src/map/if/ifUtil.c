@@ -145,6 +145,7 @@ float If_ManScanMapping( If_Man_t * p )
     If_ManForEachObj( p, pObj, i )
     {
         pObj->Required = IF_FLOAT_LARGE;
+        pObj->LValue  = 0.0f;  // wirelength accumulator (PI/const = 0)
         pObj->nVisits  = pObj->nVisitsCopy;
         pObj->nRefs    = 0;
     }
@@ -186,6 +187,7 @@ float If_ManScanMappingDirect( If_Man_t * p )
     If_ManForEachObj( p, pObj, i )
     {
         pObj->Required = IF_FLOAT_LARGE;
+        pObj->LValue  = 0.0f;  // wirelength accumulator (PI/const = 0)
         pObj->nVisits  = pObj->nVisitsCopy;
         pObj->nRefs    = 0;
     }
@@ -438,6 +440,7 @@ void If_ManMarkMapping( If_Man_t * p )
     If_ManForEachObj( p, pObj, i )
     {
         pObj->Required = IF_FLOAT_LARGE;
+        pObj->LValue  = 0.0f;  // wirelength accumulator (PI/const = 0)
         pObj->nVisits = pObj->nVisitsCopy;
         pObj->nRefs = 0;
     }

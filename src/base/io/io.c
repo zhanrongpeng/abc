@@ -4576,7 +4576,7 @@ usage:
 ***********************************************************************/
 int IoCommandReadCoords( Abc_Frame_t * pAbc, int argc, char **argv )
 {
-    Abc_Ntk_t * pNtkCoords;
+    void * pCoords;
     char * pFileName;
     int c;
 
@@ -4596,16 +4596,16 @@ int IoCommandReadCoords( Abc_Frame_t * pAbc, int argc, char **argv )
     // get the input file name
     pFileName = argv[globalUtilOptind];
     // read the coordinates
-    pNtkCoords = Io_ReadCoords( pFileName );
-    if ( pNtkCoords == NULL )
+    pCoords = Io_ReadCoords( pFileName );
+    if ( pCoords == NULL )
     {
         Abc_Print( -1, "IoCommandReadCoords(): Cannot read coordinate file \"%s\".\n", pFileName );
         return 1;
     }
-    // store in ABC frame
-    pAbc->pNtkCoords = pNtkCoords;
+    // store in ABC frame (Io_ReadCoords_t* stored as void*)
+    pAbc->pNtkCoords = pCoords;
     Abc_Print( 0, "IoCommandReadCoords(): Read %d coordinates from \"%s\".\n",
-               Io_ReadCoordsGetCount( pNtkCoords ), pFileName );
+               Io_ReadCoordsGetCountByName( pCoords ), pFileName );
     return 0;
 
 usage:
