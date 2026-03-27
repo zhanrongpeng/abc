@@ -169,8 +169,8 @@ struct Abc_Frame_t_
     void *          pNdr;
     int *           pNdrArray;
 
-    // Coordinate data for ABC-aware remapping
-    Abc_Ntk_t *     pNtkCoords;     // temporary storage for coordinate data
+    // Coordinate data for ABC-aware remapping (Io_ReadCoords_t*, see ioReadCoords.c)
+    void *          pNtkCoords;
 
     // Wire RC data for wire-aware mapping
     float           wire_r_per_um;  // resistance per micron (ohm/um)

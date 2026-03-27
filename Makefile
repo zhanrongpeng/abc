@@ -66,7 +66,11 @@ ARCHFLAGS := $(ARCHFLAGS)
 
 OPTFLAGS  ?= -g -O
 
-CFLAGS    += -Wno-array-bounds -Wno-nonnull -Wno-maybe-uninitialized -Wno-format-overflow -Wno-unused-variable -Wno-unused-function -Wno-write-strings -Wno-sign-compare -Wno-deprecated -Wno-c++11-narrowing -Wno-register -Wno-format -Wno-reserved-user-defined-literal -Wno-alloc-size-larger-than -Wno-attributes -Wno-aggressive-loop-optimizations -Wno-stringop-overflow -Wno-changes-meaning $(ARCHFLAGS)
+CFLAGS    += -Wno-array-bounds -Wno-nonnull -Wno-format-overflow -Wno-unused-variable -Wno-unused-function -Wno-write-strings -Wno-sign-compare -Wno-deprecated -Wno-c++11-narrowing -Wno-register -Wno-format -Wno-reserved-user-defined-literal -Wno-attributes $(ARCHFLAGS)
+# The following -Wno-* flags are GCC-specific; Clang treats them as unknown (-Wunknown-warning-option).
+ifeq ($(findstring clang,$(shell $(CC) --version 2>/dev/null)),)
+CFLAGS    += -Wno-maybe-uninitialized -Wno-alloc-size-larger-than -Wno-aggressive-loop-optimizations -Wno-stringop-overflow -Wno-changes-meaning
+endif
 
 ifneq ($(findstring arm,$(shell uname -m)),)
 	CFLAGS += -DABC_MEMALIGN=4
