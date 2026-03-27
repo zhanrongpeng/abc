@@ -103,12 +103,23 @@ float Map_TimeCutComputeArrival( Map_Node_t * pNode, Map_Cut_t * pCut, int fPhas
         int n_fanins = 0;
 
         // Phase 1: compute cut centroid from fanin cell positions
+        // Use vNodeOutputNetName (TFI PO name) instead of internal BLIF node name.
+        // This is the SAME approach as ifTime.c. Internal node names (e.g. "n143")
+        // are NOT in the coords file; only PO net names (e.g. "_000_", "resp_val").
         for ( i = 0; i < pCut->nLeaves; i++ )
         {
             Map_Node_t * pLeaf = pCut->ppLeaves[i];
-            Abc_Obj_t * pBlifNode = (Abc_Obj_t *)Map_NodeReadOrigNode( pLeaf );
+            int LeafId = Map_NodeReadNum( pLeaf );
+            const char * pName = NULL;
+            if ( p->vNodeOutputNetName && LeafId < p->nNodeMapSize && p->vNodeOutputNetName[LeafId] )
+                pName = (const char *)p->vNodeOutputNetName[LeafId];
+            if ( pName == NULL )
+            {
+                Abc_Obj_t * pBlifNode = (Abc_Obj_t *)Map_NodeReadOrigNode( pLeaf );
+                pName = pBlifNode ? Abc_ObjName( pBlifNode ) : NULL;
+            }
             float x, y;
-            if ( pBlifNode && Io_ReadCoordsGetCoordByName( p->pNtkCoords, Abc_ObjName(pBlifNode), &x, &y ) )
+            if ( pName && Io_ReadCoordsGetCoordByName( p->pNtkCoords, pName, &x, &y ) )
             {
                 sum_x += x;
                 sum_y += y;
@@ -126,9 +137,17 @@ float Map_TimeCutComputeArrival( Map_Node_t * pNode, Map_Cut_t * pCut, int fPhas
             for ( i = 0; i < pCut->nLeaves; i++ )
             {
                 Map_Node_t * pLeaf = pCut->ppLeaves[i];
-                Abc_Obj_t * pBlifNode = (Abc_Obj_t *)Map_NodeReadOrigNode( pLeaf );
+                int LeafId = Map_NodeReadNum( pLeaf );
+                const char * pName = NULL;
+                if ( p->vNodeOutputNetName && LeafId < p->nNodeMapSize && p->vNodeOutputNetName[LeafId] )
+                    pName = (const char *)p->vNodeOutputNetName[LeafId];
+                if ( pName == NULL )
+                {
+                    Abc_Obj_t * pBlifNode = (Abc_Obj_t *)Map_NodeReadOrigNode( pLeaf );
+                    pName = pBlifNode ? Abc_ObjName( pBlifNode ) : NULL;
+                }
                 float x, y;
-                if ( pBlifNode && Io_ReadCoordsGetCoordByName( p->pNtkCoords, Abc_ObjName(pBlifNode), &x, &y ) )
+                if ( pName && Io_ReadCoordsGetCoordByName( p->pNtkCoords, pName, &x, &y ) )
                 {
                     float dist = fabsf(x - centroid_x) + fabsf(y - centroid_y);
                     float wl = Map_NodeReadLValue( pLeaf ) + dist;

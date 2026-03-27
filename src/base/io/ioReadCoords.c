@@ -59,7 +59,6 @@ static void Io_ReadCoordsFree( Io_ReadCoords_t * p );
 static void Io_ReadCoordsPrintErrorMessage( Io_ReadCoords_t * p );
 static int Io_ReadCoordsNetwork( Io_ReadCoords_t * p );
 static void Io_ReadCoordsBuildHash( Io_ReadCoords_t * p );
-static int Io_ReadCoordsGetCoordByName( void * pCoords, const char * pName, float * px, float * py );
 
 ////////////////////////////////////////////////////////////////////////
 ///                     FUNCTION DEFINITIONS                         ///
@@ -377,7 +376,7 @@ void Io_ReadCoordsPrintNamesForDebug( void * pCoords )
     printf( "  [DEBUG] Total entries: %d\n", Vec_PtrSize(p->vNames) );
 }
 
-static int Io_ReadCoordsGetCoordByName( void * pCoords, const char * pName, float * px, float * py )
+int Io_ReadCoordsGetCoordByName( void * pCoords, const char * pName, float * px, float * py )
 {
     Io_ReadCoords_t * p = (Io_ReadCoords_t *)pCoords;
     int i;

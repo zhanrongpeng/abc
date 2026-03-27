@@ -638,10 +638,22 @@ void Map_ManSetWireAwareFromFrame( Map_Man_t * p )
     p->WireR = Abc_FrameReadWireResPerUm();
     p->WireC = Abc_FrameReadWireCapPerUm();
     p->WireDelay = p->WireR > 0 && p->WireC > 0 ? p->WireR * p->WireC * 0.5e-3f : 0.0f;
-    // build vNodeNameMap: Map_Node->Num -> Abc_Obj_t*
-    if ( p->pNtkCoords && p->pAigNodeIDs && p->nNodeMapSize > 0 )
+    // vNodeNameMap and vNodeOutputNetName are already allocated and populated
+    // by abcIf.c or abcMap.c (which correctly propagate PO net names to the TFI
+    // cone).  Map_ManSetWireAwareFromFrame() must NOT overwrite them.
+    // ABC_CALLOC would zero out the data that abcIf/abcMap spent O(n) to populate,
+    // causing wire-aware coordinate lookup to fail for all internal nodes.
+    //
+    // pAigNodeIDs is set by abcIf.c / abcMap.c but is not needed here since the
+    // name maps already contain the correct PO-net names for coordinate lookup.
+    //
+    // Wire-aware cut evaluation in mapperTime.c uses vNodeOutputNetName[LeafId]
+    // (populated by abcIf/abcMap) to look up centroid positions via
+    // Io_ReadCoordsGetCoordByName().  Wire delay uses the Elmore model:
+    //   wire_delay(ps) = WireR * WireC * L(um)^2 * 0.5 * 1e-3.
+    if ( p->pNtkCoords && p->vNodeOutputNetName == NULL && p->nNodeMapSize > 0 )
     {
-        // allocate name maps
+        // allocate only if abcIf/abcMap did not already populate the name maps
         p->vNodeNameMap = ABC_CALLOC( void *, p->nNodeMapSize );
         p->vNodeOutputNetName = ABC_CALLOC( void *, p->nNodeMapSize );
     }

@@ -423,6 +423,20 @@ Map_Man_t * Abc_NtkToMap( Abc_Ntk_t * pNtk, double DelayTarget, int fRecovery, f
         Map_NodeSetAigId( pNodeMap, pNode->Id );
         // wire-aware: store original BLIF node pointer for coordinate lookup
         Map_NodeSetOrigNode( pNodeMap, pNode );
+        // wire-aware: populate vNodeOutputNetName (TFI PO name or fallback to node name)
+        // This is the SAME logic as abcIf.c for If_Man_t. Required for mapperTime.c
+        // cut centroid coordinate lookup to work with internal AIG nodes (not just PIs).
+        if ( pMan->vNodeNameMap && pNode->Id < pMan->nNodeMapSize )
+            pMan->vNodeNameMap[pNode->Id] = pNode;
+        if ( pMan->vNodeOutputNetName && pNode->Id < pMan->nNodeMapSize )
+        {
+            const char * pOutName = NULL;
+            if ( pMan->vNodeDrivingPoName )
+                pOutName = (const char *)pMan->vNodeDrivingPoName[pNode->Id];
+            if ( pOutName == NULL || pOutName[0] == '\0' )
+                pOutName = Abc_ObjName( pNode );
+            pMan->vNodeOutputNetName[pNode->Id] = (void *)Extra_UtilStrsav( pOutName );
+        }
     }
     assert( Map_ManReadBufNum(pMan) == pNtk->nBarBufs );
     Vec_PtrFree( vNodes );
